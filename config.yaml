@@ -1,0 +1,57 @@
+database:
+  host: localhost
+  port: 5432
+  name: klia_flights
+  user: postgres
+  # password loaded from DB_PASSWORD env var
+
+data:
+  query: "SELECT * FROM departures"
+  delay_threshold_minutes: 15
+  test_size: 0.20
+  random_state: 42
+  retrain_window_days: 180
+
+features:
+  target_encode_cols:
+    - airline
+    - destination
+    - aircraft
+  peak_hours_morning: [6, 7, 8, 9]
+  peak_hours_evening: [16, 17, 18, 19]
+
+  # Step 3: Malaysian public holidays (add/remove dates as needed, format: YYYY-MM-DD)
+  public_holidays:
+    - "2026-01-01"  # New Year's Day
+    - "2026-01-29"  # Chinese New Year
+    - "2026-01-30"  # Chinese New Year Holiday
+    - "2026-02-01"  # Federal Territory Day
+    - "2026-03-28"  # Hari Raya Aidilfitri
+    - "2026-03-29"  # Hari Raya Aidilfitri Holiday
+    - "2026-04-28"  # Hari Raya Aidiladha (tbc)
+    - "2026-05-01"  # Labour Day
+    - "2026-05-12"  # Wesak Day
+    - "2026-06-01"  # Yang di-Pertuan Agong Birthday
+    - "2026-08-31"  # National Day
+    - "2026-09-16"  # Malaysia Day
+    - "2026-10-20"  # Deepavali
+    - "2026-12-25"  # Christmas
+
+  # Step 5: rolling windows for route delay rate (days)
+  route_rolling_windows: [7, 30]
+
+model:
+  cv_folds: 5
+  n_iter_search: 50    # Step 6: increased from 15 for better tuning
+  scoring: roc_auc
+
+paths:
+  data_dir: data/
+  outputs_dir: outputs/
+  logs_dir: logs/
+  model_file: outputs/best_model.pkl
+  model_meta_file: outputs/best_model_meta.json
+  engineered_data: data/df_engineered.csv
+  final_features_data: data/df_final_features.csv
+  feature_metadata: data/feature_metadata.csv
+  watermark_file: outputs/watermark.json
