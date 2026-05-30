@@ -1,0 +1,21 @@
+pandas>=2.0
+numpy>=1.26
+scikit-learn>=1.4
+xgboost>=2.0
+lightgbm>=4.0
+sqlalchemy>=2.0
+psycopg2-binary>=2.9
+joblib>=1.3
+pyyaml>=6.0
+scipy>=1.12
+category-encoders>=2.6.0
+
+# Notebooks
+jupyterlab>=4.0
+matplotlib>=3.8
+seaborn>=0.13
+ipykernel>=6.0
+
+# Note: nvidia-nccl-cu12 is pulled in by XGBoost on Linux only.
+# It is intentionally excluded from requirements.lock so the lock file
+# works on Windows, macOS, and Linux without modification.
