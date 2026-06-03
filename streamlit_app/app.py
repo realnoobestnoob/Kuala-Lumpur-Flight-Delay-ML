@@ -152,7 +152,7 @@ def _load_log_last_7_days() -> pd.DataFrame:
                     COALESCE(
                         CASE
                             WHEN d.actual_departure IS NOT NULL
-                            THEN d.actual_departure::TIME > d.scheduled_departure::TIME + INTERVAL '15 minutes'
+                            THEN d.actual_departure > d.scheduled_departure + INTERVAL '15 minutes'
                             ELSE NULL
                         END,
                         pl.actual_delayed
@@ -181,9 +181,9 @@ def _load_delay_by_hour() -> pd.DataFrame:
         engine = _get_engine_cloud()
         with engine.connect() as conn:
             rows = conn.execute(text("""
-                SELECT EXTRACT(HOUR FROM scheduled_departure::TIME)::int AS hour,
+                SELECT EXTRACT(HOUR FROM scheduled_departure)::int AS hour,
                        COUNT(*) AS total,
-                       SUM(CASE WHEN actual_departure::TIME > scheduled_departure::TIME + INTERVAL '15 minutes'
+                       SUM(CASE WHEN actual_departure > scheduled_departure + INTERVAL '15 minutes'
                                 THEN 1 ELSE 0 END) AS delayed
                 FROM departures
                 WHERE actual_departure IS NOT NULL
@@ -206,7 +206,7 @@ def _load_delay_by_dow() -> pd.DataFrame:
             rows = conn.execute(text("""
                 SELECT EXTRACT(DOW FROM date)::int AS dow,
                        COUNT(*) AS total,
-                       SUM(CASE WHEN actual_departure::TIME > scheduled_departure::TIME + INTERVAL '15 minutes'
+                       SUM(CASE WHEN actual_departure > scheduled_departure + INTERVAL '15 minutes'
                                 THEN 1 ELSE 0 END) AS delayed
                 FROM departures
                 WHERE actual_departure IS NOT NULL
@@ -229,13 +229,13 @@ def _load_top_delayed_airlines(n: int = 5) -> pd.DataFrame:
             rows = conn.execute(text("""
                 SELECT airline,
                        COUNT(*) AS total,
-                       SUM(CASE WHEN actual_departure::TIME > scheduled_departure::TIME + INTERVAL '15 minutes'
+                       SUM(CASE WHEN actual_departure > scheduled_departure + INTERVAL '15 minutes'
                                 THEN 1 ELSE 0 END) AS delayed
                 FROM departures
                 WHERE actual_departure IS NOT NULL AND airline IS NOT NULL
                 GROUP BY airline
-                HAVING COUNT(*) >= 30
-                ORDER BY (SUM(CASE WHEN actual_departure::TIME > scheduled_departure::TIME + INTERVAL '15 minutes'
+                HAVING COUNT(*) >= 5
+                ORDER BY (SUM(CASE WHEN actual_departure > scheduled_departure + INTERVAL '15 minutes'
                                    THEN 1.0 ELSE 0.0 END) / COUNT(*)) DESC
                 LIMIT :n
             """), {"n": n}).fetchall()
@@ -256,13 +256,13 @@ def _load_top_delayed_routes(n: int = 5) -> pd.DataFrame:
             rows = conn.execute(text("""
                 SELECT destination,
                        COUNT(*) AS total,
-                       SUM(CASE WHEN actual_departure::TIME > scheduled_departure::TIME + INTERVAL '15 minutes'
+                       SUM(CASE WHEN actual_departure > scheduled_departure + INTERVAL '15 minutes'
                                 THEN 1 ELSE 0 END) AS delayed
                 FROM departures
                 WHERE actual_departure IS NOT NULL AND destination IS NOT NULL
                 GROUP BY destination
-                HAVING COUNT(*) >= 20
-                ORDER BY (SUM(CASE WHEN actual_departure::TIME > scheduled_departure::TIME + INTERVAL '15 minutes'
+                HAVING COUNT(*) >= 5
+                ORDER BY (SUM(CASE WHEN actual_departure > scheduled_departure + INTERVAL '15 minutes'
                                    THEN 1.0 ELSE 0.0 END) / COUNT(*)) DESC
                 LIMIT :n
             """), {"n": n}).fetchall()
@@ -283,14 +283,14 @@ def _load_top_delayed_airline_routes(n: int = 5) -> pd.DataFrame:
             rows = conn.execute(text("""
                 SELECT airline, destination,
                        COUNT(*) AS total,
-                       SUM(CASE WHEN actual_departure::TIME > scheduled_departure::TIME + INTERVAL '15 minutes'
+                       SUM(CASE WHEN actual_departure > scheduled_departure + INTERVAL '15 minutes'
                                 THEN 1 ELSE 0 END) AS delayed
                 FROM departures
                 WHERE actual_departure IS NOT NULL
                   AND airline IS NOT NULL AND destination IS NOT NULL
                 GROUP BY airline, destination
-                HAVING COUNT(*) >= 15
-                ORDER BY (SUM(CASE WHEN actual_departure::TIME > scheduled_departure::TIME + INTERVAL '15 minutes'
+                HAVING COUNT(*) >= 5
+                ORDER BY (SUM(CASE WHEN actual_departure > scheduled_departure + INTERVAL '15 minutes'
                                    THEN 1.0 ELSE 0.0 END) / COUNT(*)) DESC
                 LIMIT :n
             """), {"n": n}).fetchall()
@@ -315,7 +315,7 @@ def lookup_db(fn, fd):
             row = conn.execute(text("""
                 SELECT airline, destination,
                        COALESCE(aircraft,'Unknown') AS aircraft,
-                       scheduled_departure
+                       TO_CHAR(scheduled_departure,'HH24:MI') AS scheduled_departure
                 FROM departures
                 WHERE UPPER(REPLACE(flight_number,' ',''))=UPPER(REPLACE(:fn,' ',''))
                   AND date=:dt LIMIT 1
@@ -390,7 +390,7 @@ def get_rates(airline, destination, hour):
         "prev_aircraft_delayed_2":0, "prev_aircraft_delayed_3":0,
         "airline_delay_rate_ewm":0.30, "route_delay_rate_ewm":0.30,
     }
-    is_del = "CASE WHEN actual_departure::TIME>scheduled_departure::TIME+INTERVAL '15 minutes' THEN 1.0 ELSE 0.0 END"
+    is_del = "CASE WHEN actual_departure>scheduled_departure+INTERVAL '15 minutes' THEN 1.0 ELSE 0.0 END"
     try:
         engine = _get_engine_cloud()
         with engine.connect() as conn:
@@ -402,21 +402,21 @@ def get_rates(airline, destination, hour):
             if v:
                 r.update(airline_delay_rate=v, airline_encoded=v,
                          delay_ratio_prev_3_airline=v, airline_delay_rate_ewm=v)
-            v = q(f"SELECT AVG({is_del}) FROM departures WHERE UPPER(airline)=UPPER(:a) AND EXTRACT(HOUR FROM scheduled_departure::TIME)=:h", {"a":airline,"h":hour})
+            v = q(f"SELECT AVG({is_del}) FROM departures WHERE UPPER(airline)=UPPER(:a) AND EXTRACT(HOUR FROM scheduled_departure)=:h", {"a":airline,"h":hour})
             if v: r["airline_hour_delay_rate"] = v
             v = q(f"SELECT AVG({is_del}) FROM departures WHERE UPPER(airline)=UPPER(:a) AND UPPER(destination)=UPPER(:d)", {"a":airline,"d":destination})
             if v:
                 r.update(route_delay_rate=v, destination_encoded=v, route_delay_rate_ewm=v)
-            v = q(f"SELECT AVG({is_del}) FROM departures WHERE UPPER(airline)=UPPER(:a) AND UPPER(destination)=UPPER(:d) AND EXTRACT(HOUR FROM scheduled_departure::TIME)=:h", {"a":airline,"d":destination,"h":hour})
+            v = q(f"SELECT AVG({is_del}) FROM departures WHERE UPPER(airline)=UPPER(:a) AND UPPER(destination)=UPPER(:d) AND EXTRACT(HOUR FROM scheduled_departure)=:h", {"a":airline,"d":destination,"h":hour})
             if v: r["route_hour_delay_rate"] = v
             for days, key in [(7,"route_delay_rate_7d"), (30,"route_delay_rate_30d")]:
                 v = q(f"SELECT AVG({is_del}) FROM departures WHERE UPPER(airline)=UPPER(:a) AND UPPER(destination)=UPPER(:d) AND date>=CURRENT_DATE-INTERVAL '{days} days'", {"a":airline,"d":destination})
                 if v: r[key] = v
-            v = q(f"SELECT {is_del} FROM departures WHERE UPPER(airline)=UPPER(:a) ORDER BY date DESC, scheduled_departure DESC LIMIT 1", {"a":airline})
+            v = q(f"SELECT {is_del} FROM departures WHERE UPPER(airline)=UPPER(:a) ORDER BY date DESC,scheduled_departure DESC LIMIT 1", {"a":airline})
             if v:
                 iv = int(v)
                 r.update(prev_aircraft_delayed=iv, prev_aircraft_delayed_1=iv)
-            v = q("SELECT COUNT(*)::float/NULLIF(COUNT(DISTINCT date),0) FROM departures WHERE EXTRACT(HOUR FROM scheduled_departure::TIME)=:h", {"h":hour})
+            v = q("SELECT COUNT(*)::float/NULLIF(COUNT(DISTINCT date),0) FROM departures WHERE EXTRACT(HOUR FROM scheduled_departure)=:h", {"h":hour})
             if v: r.update(flights_per_hour=v, concurrent_departures=v)
             v = q(f"SELECT AVG({is_del}) FROM departures WHERE UPPER(airline)=UPPER(:a) AND aircraft IS NOT NULL AND aircraft != 'Unknown'", {"a": airline})
             if v: r["aircraft_encoded"] = v
@@ -715,6 +715,22 @@ def _route_history_chart(airline, destination, rates):
     airline_30d         = rates.get("airline_delay_rate_ewm", 0.30)
     route_30d           = rates.get("route_delay_rate_30d",   0.30)
     airline_x_route_30d = round((airline_30d + route_30d) / 2, 4)
+
+    # All three values still at the 0.30 fallback means no real DB data was found
+    all_default = (
+        rates.get("airline_delay_rate_ewm") is None
+        and rates.get("route_delay_rate_30d") is None
+    ) or (airline_30d == 0.30 and route_30d == 0.30
+          and rates.get("airline_delay_rate") == 0.30)
+
+    fig, ax = dark_fig(figsize=(8, 3.2))
+    if all_default:
+        ax.text(0.5, 0.5, "Insufficient data for this airline & route",
+                ha="center", va="center", color="#8b949e",
+                fontsize=10, transform=ax.transAxes)
+        ax.set_title(f"30-Day Delay History — {airline} · {destination}", fontsize=10, pad=10)
+        fig.tight_layout()
+        return fig
     labels = [
         f"Route (30d)\n{airline} → {destination}",
         f"Airline (30d)\n{airline}",
@@ -739,8 +755,8 @@ def _route_history_chart(airline, destination, rates):
 def _delay_by_hour_chart(df: pd.DataFrame):
     fig, ax = dark_fig(figsize=(10, 3.6))
     if df.empty:
-        ax.text(0.5, 0.5, "No data", ha="center", va="center",
-                color="#8b949e", transform=ax.transAxes)
+        ax.text(0.5, 0.5, "Insufficient data", ha="center", va="center",
+                color="#8b949e", fontsize=10, transform=ax.transAxes)
     else:
         colors = ["#f85149" if v >= 50 else "#d29922" if v >= 30 else "#3fb950"
                   for v in df["delay_pct"]]
@@ -760,8 +776,8 @@ def _delay_by_dow_chart(df: pd.DataFrame):
     dow_names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
     fig, ax = dark_fig(figsize=(10, 3.6))
     if df.empty:
-        ax.text(0.5, 0.5, "No data", ha="center", va="center",
-                color="#8b949e", transform=ax.transAxes)
+        ax.text(0.5, 0.5, "Insufficient data", ha="center", va="center",
+                color="#8b949e", fontsize=10, transform=ax.transAxes)
     else:
         labels = [dow_names[d] for d in df["dow"]]
         colors = ["#f85149" if v >= 50 else "#d29922" if v >= 30 else "#3fb950"
@@ -781,8 +797,8 @@ def _delay_by_dow_chart(df: pd.DataFrame):
 def _top_airlines_chart(df: pd.DataFrame):
     fig, ax = dark_fig(figsize=(10, 3.6))
     if df.empty:
-        ax.text(0.5, 0.5, "No data", ha="center", va="center",
-                color="#8b949e", transform=ax.transAxes)
+        ax.text(0.5, 0.5, "Insufficient data", ha="center", va="center",
+                color="#8b949e", fontsize=10, transform=ax.transAxes)
     else:
         df_s = df.sort_values("delay_pct")
         colors = ["#f85149" if v >= 50 else "#d29922" if v >= 30 else "#3fb950"
@@ -804,8 +820,8 @@ def _top_airlines_chart(df: pd.DataFrame):
 def _top_routes_chart(df: pd.DataFrame):
     fig, ax = dark_fig(figsize=(10, 3.6))
     if df.empty:
-        ax.text(0.5, 0.5, "No data", ha="center", va="center",
-                color="#8b949e", transform=ax.transAxes)
+        ax.text(0.5, 0.5, "Insufficient data", ha="center", va="center",
+                color="#8b949e", fontsize=10, transform=ax.transAxes)
     else:
         df_s = df.sort_values("delay_pct")
         colors = ["#f85149" if v >= 50 else "#d29922" if v >= 30 else "#3fb950"
@@ -827,8 +843,8 @@ def _top_routes_chart(df: pd.DataFrame):
 def _top_airline_routes_chart(df: pd.DataFrame):
     fig, ax = dark_fig(figsize=(10, 3.6))
     if df.empty:
-        ax.text(0.5, 0.5, "No data", ha="center", va="center",
-                color="#8b949e", transform=ax.transAxes)
+        ax.text(0.5, 0.5, "Insufficient data", ha="center", va="center",
+                color="#8b949e", fontsize=10, transform=ax.transAxes)
     else:
         df_s = df.sort_values("delay_pct")
         colors = ["#f85149" if v >= 50 else "#d29922" if v >= 30 else "#3fb950"
@@ -886,6 +902,33 @@ header[data-testid="stHeader"],
 }
 [data-testid="stMetricLabel"] p { font-size: 0.72rem !important; }
 [data-testid="stMetricValue"]   { font-size: 1.05rem !important; }
+
+/* Transparent full-screen (expand) button on charts */
+[data-testid="StyledFullScreenButton"],
+button[title="View fullscreen"] {
+    background: transparent !important;
+    background-color: transparent !important;
+    border: 1px solid rgba(139,148,158,0.3) !important;
+    color: #8b949e !important;
+}
+[data-testid="StyledFullScreenButton"]:hover,
+button[title="View fullscreen"]:hover {
+    background: rgba(255,255,255,0.08) !important;
+    border-color: #8b949e !important;
+}
+
+/* Transparent Refresh Data button */
+[data-testid="stButton"] button {
+    background: transparent !important;
+    background-color: transparent !important;
+    border: 1px solid rgba(139,148,158,0.4) !important;
+    color: #c9d1d9 !important;
+}
+[data-testid="stButton"] button:hover {
+    background: rgba(255,255,255,0.08) !important;
+    border-color: #8b949e !important;
+    color: white !important;
+}
 
 .metric-card {
     background: rgba(22,27,34,0.92); border: 1px solid #21262d;
