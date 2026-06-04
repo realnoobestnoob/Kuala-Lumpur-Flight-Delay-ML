@@ -1298,26 +1298,27 @@ with tab_dashboard:
         st.pyplot(fig_routes, use_container_width=True)
         plt.close(fig_routes)
 
-    # ── Row 4: Top Airline + Route Combos (full width) ────────────────────────
-    st.markdown('<div class="section-header">Top 5 Most Delayed Airline + Route Combos</div>',
-                unsafe_allow_html=True)
-    df_combo = _load_top_delayed_airline_routes()
-    fig_combo = _top_airline_routes_chart(df_combo)
-    st.pyplot(fig_combo, use_container_width=True)
-    plt.close(fig_combo)
+    # ── Row 4: Top Airline + Route Combos + Overall Delay Distribution (side by side) ───
+    row4_left, row4_right = st.columns(2, gap="medium")
 
-    # ── Row 5: Overall Delay Distribution (full width) ──────────────────────────
-    st.markdown('<div class="section-header">Overall Delay Distribution</div>',
-                unsafe_allow_html=True)
-    delay_stats = _load_overall_delay_stats()
-    fig_donut = _overall_delay_donut_chart(delay_stats)
-    col_donut_spacer1, col_donut, col_donut_spacer2 = st.columns([1, 2, 1])
-    with col_donut:
+    with row4_left:
+        st.markdown('<div class="section-header">Top 5 Most Delayed Airline + Route Combos</div>',
+                    unsafe_allow_html=True)
+        df_combo = _load_top_delayed_airline_routes()
+        fig_combo = _top_airline_routes_chart(df_combo)
+        st.pyplot(fig_combo, use_container_width=True)
+        plt.close(fig_combo)
+
+    with row4_right:
+        st.markdown('<div class="section-header">Overall Delay Distribution</div>',
+                    unsafe_allow_html=True)
+        delay_stats = _load_overall_delay_stats()
+        fig_donut = _overall_delay_donut_chart(delay_stats)
         st.pyplot(fig_donut, use_container_width=True)
-    plt.close(fig_donut)
-    
-    # Display summary metrics
-    metric_col1, metric_col2, metric_col3 = st.columns(3)
-    metric_col1.metric("Total Flights", f"{delay_stats['total']:,}")
-    metric_col2.metric("Delayed (>15 min)", f"{delay_stats['delayed']:,}")
-    metric_col3.metric("On-Time", f"{delay_stats['not_delayed']:,}")
+        plt.close(fig_donut)
+        
+        # Display summary metrics
+        metric_col1, metric_col2, metric_col3 = st.columns(3)
+        metric_col1.metric("Total Flights", f"{delay_stats['total']:,}\n(in database)", help="Total flights in database with actual departure times")
+        metric_col2.metric("Delayed (>15 min)", f"{delay_stats['delayed']:,}")
+        metric_col3.metric("On-Time", f"{delay_stats['not_delayed']:,}")
