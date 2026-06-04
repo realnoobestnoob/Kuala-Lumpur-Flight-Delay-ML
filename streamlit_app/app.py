@@ -193,8 +193,10 @@ def _load_delay_by_hour() -> pd.DataFrame:
             df = pd.DataFrame(rows, columns=["hour","total","delayed"])
             df["delay_pct"] = df["delayed"] / df["total"] * 100
             return df
-    except Exception:
-        pass
+    except Exception as e:
+        import traceback
+        st.error(f"Query error in _load_delay_by_hour: {e}")
+        traceback.print_exc()
     return pd.DataFrame(columns=["hour","total","delayed","delay_pct"])
 
 @st.cache_data(show_spinner=False)
@@ -216,8 +218,10 @@ def _load_delay_by_dow() -> pd.DataFrame:
             df = pd.DataFrame(rows, columns=["dow","total","delayed"])
             df["delay_pct"] = df["delayed"] / df["total"] * 100
             return df
-    except Exception:
-        pass
+    except Exception as e:
+        import traceback
+        st.error(f"Query error in _load_delay_by_dow: {e}")
+        traceback.print_exc()
     return pd.DataFrame(columns=["dow","total","delayed","delay_pct"])
 
 @st.cache_data(show_spinner=False)
@@ -302,6 +306,73 @@ def _load_top_delayed_airline_routes(n: int = 5) -> pd.DataFrame:
     except Exception:
         pass
     return pd.DataFrame(columns=["airline","destination","total","delayed","delay_pct","label"])
+
+
+@st.cache_data(show_spinner=False)
+def _load_overall_delay_stats() -> dict:
+    """Get overall stats: total flights, delayed flights, no-delay flights."""
+    try:
+        engine = _get_engine_cloud()
+        with engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT COUNT(*) AS total,
+                       SUM(CASE WHEN actual_departure > scheduled_departure + INTERVAL '15 minutes'
+                                THEN 1 ELSE 0 END) AS delayed
+                FROM departures
+                WHERE actual_departure IS NOT NULL
+            """)).fetchone()
+        if result:
+            total, delayed = result[0], result[1] or 0
+            not_delayed = total - delayed
+            return {
+                "total": total,
+                "delayed": delayed,
+                "not_delayed": not_delayed,
+                "delayed_pct": (delayed / total * 100) if total > 0 else 0,
+                "not_delayed_pct": (not_delayed / total * 100) if total > 0 else 0,
+            }
+    except Exception as e:
+        import traceback
+        st.error(f"Query error in _load_overall_delay_stats: {e}")
+        traceback.print_exc()
+    return {"total": 0, "delayed": 0, "not_delayed": 0, "delayed_pct": 0, "not_delayed_pct": 0}
+
+
+def _overall_delay_donut_chart(stats: dict):
+    """Donut chart showing % flights delayed vs not delayed."""
+    fig, ax = dark_fig(figsize=(7, 4.5))
+    
+    if stats["total"] == 0:
+        ax.text(0.5, 0.5, "Insufficient data", ha="center", va="center",
+                color="#8b949e", fontsize=10, transform=ax.transAxes)
+        ax.set_title("Overall Delay Distribution", fontsize=10, pad=10)
+        fig.tight_layout()
+        return fig
+    
+    sizes = [stats["delayed"], stats["not_delayed"]]
+    labels = [f"Delayed\n{stats['delayed_pct']:.1f}%", 
+              f"On-Time\n{stats['not_delayed_pct']:.1f}%"]
+    colors = ["#e74c3c", "#3fb950"]
+    explode = (0.05, 0)
+    
+    wedges, texts, autotexts = ax.pie(
+        sizes, labels=labels, colors=colors, autopct="",
+        explode=explode, startangle=90,
+        textprops={"fontsize": 9, "color": "#e6edf3", "weight": "600"}
+    )
+    
+    # Draw donut hole
+    centre_circle = plt.Circle((0, 0), 0.70, fc="#0d1117", zorder=10)
+    ax.add_artist(centre_circle)
+    
+    # Center text
+    ax.text(0, 0, f"{stats['total']}\nFlights", 
+            ha="center", va="center", fontsize=11, weight="600",
+            color="#e6edf3", zorder=11)
+    
+    ax.set_title("Overall Delay Distribution", fontsize=10, pad=10)
+    fig.tight_layout()
+    return fig
 
 
 
@@ -905,16 +976,24 @@ header[data-testid="stHeader"],
 
 /* Transparent full-screen (expand) button on charts */
 [data-testid="StyledFullScreenButton"],
-button[title="View fullscreen"] {
+[data-testid="StyledFullScreenButton"] button,
+button[title="View fullscreen"],
+.stPlotlyChart button[title*="fullscreen"],
+.stPlotlyChart button[title*="Fullscreen"] {
     background: transparent !important;
     background-color: transparent !important;
     border: 1px solid rgba(139,148,158,0.3) !important;
     color: #8b949e !important;
+    fill: #8b949e !important;
 }
 [data-testid="StyledFullScreenButton"]:hover,
-button[title="View fullscreen"]:hover {
+[data-testid="StyledFullScreenButton"] button:hover,
+button[title="View fullscreen"]:hover,
+.stPlotlyChart button[title*="fullscreen"]:hover,
+.stPlotlyChart button[title*="Fullscreen"]:hover {
     background: rgba(255,255,255,0.08) !important;
     border-color: #8b949e !important;
+    fill: #8b949e !important;
 }
 
 /* Transparent Refresh Data button */
@@ -1226,3 +1305,19 @@ with tab_dashboard:
     fig_combo = _top_airline_routes_chart(df_combo)
     st.pyplot(fig_combo, use_container_width=True)
     plt.close(fig_combo)
+
+    # ── Row 5: Overall Delay Distribution (full width) ──────────────────────────
+    st.markdown('<div class="section-header">Overall Delay Distribution</div>',
+                unsafe_allow_html=True)
+    delay_stats = _load_overall_delay_stats()
+    fig_donut = _overall_delay_donut_chart(delay_stats)
+    col_donut_spacer1, col_donut, col_donut_spacer2 = st.columns([1, 2, 1])
+    with col_donut:
+        st.pyplot(fig_donut, use_container_width=True)
+    plt.close(fig_donut)
+    
+    # Display summary metrics
+    metric_col1, metric_col2, metric_col3 = st.columns(3)
+    metric_col1.metric("Total Flights", f"{delay_stats['total']:,}")
+    metric_col2.metric("Delayed (>15 min)", f"{delay_stats['delayed']:,}")
+    metric_col3.metric("On-Time", f"{delay_stats['not_delayed']:,}")
